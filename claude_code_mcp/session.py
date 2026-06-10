@@ -9,7 +9,7 @@ from dataclasses import asdict, dataclass
 from typing import Any
 
 from . import metadata
-from .parser import SessionState, detect_state, extract_response
+from .parser import SessionState, detect_state, extract_response, is_startup_screen
 
 
 @dataclass
@@ -68,20 +68,37 @@ def send_ctrl_c(name: str) -> None:
 # State polling
 # ---------------------------------------------------------------------------
 
-async def _wait_for_idle(name: str, timeout: float) -> bool:
-    """Poll until Claude Code goes idle or timeout expires."""
-    deadline = time.monotonic() + timeout
+async def _wait_for_idle(name: str, timeout: float, *, dismiss_startup: bool = False) -> bool:
+    """Poll until Claude Code goes idle or timeout expires.
 
-    # Give Claude up to 5 s to show "esc to interrupt" after input is sent
+    When *dismiss_startup* is True, automatically press Enter to accept the
+    default effort option if the startup selector UI is detected, then continue
+    waiting for real idle.
+    """
+    deadline = time.monotonic() + timeout
+    startup_dismissed = False
+
+    # Give Claude up to 5 s to show "esc to interrupt" after input is sent.
+    # Break early if the startup screen is already visible.
     for _ in range(10):
-        if detect_state(get_pane(name)) == SessionState.BUSY:
+        pane = get_pane(name)
+        if dismiss_startup and is_startup_screen(pane):
+            break
+        if detect_state(pane) == SessionState.BUSY:
             break
         await asyncio.sleep(0.5)
 
-    # Wait for stable idle (two consecutive checks)
+    # Wait for stable idle (two consecutive checks).
+    # When dismiss_startup is active, the startup screen does not count as idle.
     stable = 0
     while time.monotonic() < deadline:
-        if detect_state(get_pane(name)) == SessionState.IDLE:
+        pane = get_pane(name)
+        if dismiss_startup and is_startup_screen(pane):
+            if not startup_dismissed:
+                _run("tmux", "send-keys", "-t", f"{name}:0.0", "Enter")
+                startup_dismissed = True
+            stable = 0
+        elif detect_state(pane) == SessionState.IDLE:
             stable += 1
             if stable >= 2:
                 return True
@@ -182,15 +199,24 @@ async def send_prompt(
     """
     if not session_alive(name):
         start_session(name, claude_session_id=claude_session_id, working_dir=working_dir)
-        # Wait for Claude to start up and reach idle before injecting the prompt
-        started = await _wait_for_idle(name, timeout=30.0)
+        # Wait for Claude to start up; auto-dismiss the effort-selection screen if shown.
+        started = await _wait_for_idle(name, timeout=30.0, dismiss_startup=True)
         if not started:
             raise RuntimeError(
                 f"Session '{name}' was auto-created but did not become idle within 30 s"
             )
 
-    if detect_state(get_pane(name)) == SessionState.BUSY:
+    pane = get_pane(name)
+    if detect_state(pane) == SessionState.BUSY:
         raise RuntimeError(f"Session '{name}' is currently busy")
+
+    # Safety net: dismiss the startup screen even when the session already existed.
+    if is_startup_screen(pane):
+        _run("tmux", "send-keys", "-t", f"{name}:0.0", "Enter")
+        if not await _wait_for_idle(name, timeout=30.0):
+            raise RuntimeError(
+                f"Session '{name}' did not exit startup screen within 30 s"
+            )
 
     before = get_pane(name, full_history=True)
     send_keys(name, prompt)

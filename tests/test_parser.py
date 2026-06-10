@@ -7,6 +7,7 @@ from claude_code_mcp.parser import (
     clean_line,
     detect_state,
     extract_response,
+    is_startup_screen,
     strip_ansi,
 )
 
@@ -32,6 +33,18 @@ esc to interrupt
 SPINNER_PANE = "Some content\n⠋ Processing...\n"
 
 ANSI_TEXT = "\x1b[32mGreen\x1b[0m \x1b[1mBold\x1b[0m plain"
+
+STARTUP_PANE = """\
+Claude Code v2.1.92
+Tips for getting started
+Welcome back Oskar!
+We recommend medium effort for Opus
+Effort determines how long Claude thinks for when completing your task.
+○ low · ◐ medium · ● high
+❯ 1. ◐ Medium (recommended)
+2. ● High
+3. ○ Low
+"""
 
 
 # ---------------------------------------------------------------------------
@@ -160,3 +173,46 @@ def test_extract_response_fallback_when_prompt_not_found():
     # prompt not in 'after', should still return something reasonable
     result = extract_response(before, after, "zzz-not-present")
     assert "Response line." in result
+
+
+# ---------------------------------------------------------------------------
+# is_startup_screen
+# ---------------------------------------------------------------------------
+
+def test_is_startup_screen_full_pane():
+    assert is_startup_screen(STARTUP_PANE)
+
+
+def test_is_startup_screen_effort_option_line():
+    assert is_startup_screen("❯ 1. ◐ Medium (recommended)\n")
+
+
+def test_is_startup_screen_effort_text():
+    assert is_startup_screen("Effort determines how long Claude thinks\n")
+
+
+def test_is_startup_screen_options_line():
+    assert is_startup_screen("○ low · ◐ medium · ● high\n")
+
+
+def test_is_startup_screen_normal_idle_is_false():
+    assert not is_startup_screen(IDLE_PANE)
+
+
+def test_is_startup_screen_empty_is_false():
+    assert not is_startup_screen("")
+
+
+def test_is_startup_screen_busy_is_false():
+    assert not is_startup_screen(BUSY_PANE)
+
+
+def test_is_startup_screen_strips_ansi():
+    ansi_startup = "\x1b[1m❯ 1.\x1b[0m ◐ Medium (recommended)\n"
+    assert is_startup_screen(ansi_startup)
+
+
+def test_detect_state_startup_screen_is_idle():
+    # The startup screen has no spinner and no "esc to interrupt" — it reads as IDLE.
+    # is_startup_screen() is the correct gate, not detect_state().
+    assert detect_state(STARTUP_PANE) == SessionState.IDLE

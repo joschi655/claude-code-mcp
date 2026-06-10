@@ -151,7 +151,7 @@ async def test_send_prompt_autocreates_missing_session():
 
     pane_content = "idle content\n>"
 
-    async def _idle_ok(_name, timeout):
+    async def _idle_ok(_name, timeout, **kwargs):
         return True
 
     with (
@@ -159,6 +159,7 @@ async def test_send_prompt_autocreates_missing_session():
         patch.object(sess, "start_session") as mock_start,
         patch.object(sess, "get_pane", return_value=pane_content),
         patch.object(sess, "detect_state", return_value=SessionState.IDLE),
+        patch.object(sess, "is_startup_screen", return_value=False),
         patch.object(sess, "_wait_for_idle", side_effect=_idle_ok),
         patch.object(sess, "send_keys"),
         patch.object(sess, "extract_response", return_value="auto-created response"),
@@ -186,7 +187,7 @@ async def test_send_prompt_uses_existing_session():
 
     pane_content = "idle content\n>"
 
-    async def _idle_ok(_name, timeout):
+    async def _idle_ok(_name, timeout, **kwargs):
         return True
 
     with (
@@ -194,6 +195,7 @@ async def test_send_prompt_uses_existing_session():
         patch.object(sess, "start_session") as mock_start,
         patch.object(sess, "get_pane", return_value=pane_content),
         patch.object(sess, "detect_state", return_value=SessionState.IDLE),
+        patch.object(sess, "is_startup_screen", return_value=False),
         patch.object(sess, "_wait_for_idle", side_effect=_idle_ok),
         patch.object(sess, "send_keys"),
         patch.object(sess, "extract_response", return_value="existing response"),
@@ -202,6 +204,65 @@ async def test_send_prompt_uses_existing_session():
 
     mock_start.assert_not_called()
     assert result["response"] == "existing response"
+
+
+@pytest.mark.asyncio
+async def test_send_prompt_autocreate_uses_dismiss_startup():
+    """send_prompt should pass dismiss_startup=True to _wait_for_idle when auto-creating."""
+    import claude_code_mcp.session as sess
+
+    pane_content = "idle content\n>"
+
+    async def _idle_ok(_name, timeout, **kwargs):
+        return True
+
+    with (
+        patch.object(sess, "session_alive", return_value=False),
+        patch.object(sess, "start_session"),
+        patch.object(sess, "get_pane", return_value=pane_content),
+        patch.object(sess, "detect_state", return_value=SessionState.IDLE),
+        patch.object(sess, "is_startup_screen", return_value=False),
+        patch.object(sess, "_wait_for_idle", side_effect=_idle_ok) as mock_wait,
+        patch.object(sess, "send_keys"),
+        patch.object(sess, "extract_response", return_value="response"),
+    ):
+        await sess.send_prompt("new-session", "hello")
+
+    # The bootstrap _wait_for_idle call must carry dismiss_startup=True
+    bootstrap_call = mock_wait.call_args_list[0]
+    assert bootstrap_call.kwargs.get("dismiss_startup") is True
+
+
+@pytest.mark.asyncio
+async def test_send_prompt_dismisses_startup_on_existing_session():
+    """send_prompt should send Enter to dismiss the startup screen on an already-alive session."""
+    import claude_code_mcp.session as sess
+
+    startup_pane = "❯ 1. ◐ Medium (recommended)\nEffort determines how long..."
+    idle_pane = "idle content\n>"
+
+    async def _idle_ok(_name, timeout, **kwargs):
+        return True
+
+    # First get_pane call returns startup screen; subsequent calls return idle
+    pane_results = iter([startup_pane, idle_pane, idle_pane])
+
+    with (
+        patch.object(sess, "session_alive", return_value=True),
+        patch.object(sess, "get_pane", side_effect=lambda n, **kw: next(pane_results, idle_pane)),
+        patch.object(sess, "detect_state", return_value=SessionState.IDLE),
+        patch.object(sess, "is_startup_screen", side_effect=lambda p: p == startup_pane),
+        patch.object(sess, "_wait_for_idle", side_effect=_idle_ok),
+        patch.object(sess, "send_keys"),
+        patch.object(sess, "_run") as mock_run,
+        patch.object(sess, "extract_response", return_value="TEST_OK"),
+    ):
+        result = await sess.send_prompt("existing-session", "hello")
+
+    # Verify that Enter was sent to dismiss the startup screen
+    enter_calls = [c for c in mock_run.call_args_list if "Enter" in str(c)]
+    assert len(enter_calls) >= 1
+    assert result["response"] == "TEST_OK"
 
 
 # ---------------------------------------------------------------------------

@@ -49,6 +49,19 @@ def _is_chrome(line: str) -> bool:
     return False
 
 
+_STARTUP_PATTERNS = (
+    re.compile(r"effort determines how long", re.I),
+    re.compile(r"❯\s*1\."),
+    re.compile(r"○ low.*◐ medium.*● high"),
+)
+
+
+def is_startup_screen(pane_content: str) -> bool:
+    """Return True if the pane is showing Claude Code's effort-selection startup UI."""
+    clean = strip_ansi(pane_content)
+    return any(p.search(clean) for p in _STARTUP_PATTERNS)
+
+
 def extract_response(before: str, after: str, sent_prompt: str) -> str:
     """Return the assistant text that appeared after *sent_prompt* was sent.
 
