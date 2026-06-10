@@ -109,8 +109,11 @@ def test_detect_busy_case_insensitive():
     "   ",
     "✓",
     "●◆→",
+    "❯",
     "esc to interrupt",
     "ESC TO INTERRUPT",
+    "? for shortcuts                                  /buddy",
+    "✗ Auto-update failed · Try claude doctor or npm i -g @anthropic-ai/claude-code",
 ])
 def test_is_chrome_true(line):
     assert _is_chrome(line)
@@ -166,6 +169,25 @@ def test_extract_response_no_trailing_blank():
     result = extract_response(before, after, "new prompt")
     assert not result.endswith("\n")
     assert "Answer here." in result
+
+
+def test_extract_response_strips_leading_bullet():
+    """Leading status chars like ● are stripped from content lines."""
+    before = ""
+    after = "run test\n● TEST_OK\n❯\n? for shortcuts   /buddy\n"
+    result = extract_response(before, after, "run test")
+    assert result == "TEST_OK"
+    assert "●" not in result
+    assert "❯" not in result
+    assert "shortcuts" not in result
+
+
+def test_extract_response_filters_auto_update_banner():
+    before = ""
+    after = "check\nThe answer is 7.\n✗ Auto-update failed · Try claude doctor\n>\n"
+    result = extract_response(before, after, "check")
+    assert "7" in result
+    assert "Auto-update" not in result
 
 
 def test_extract_response_fallback_when_prompt_not_found():

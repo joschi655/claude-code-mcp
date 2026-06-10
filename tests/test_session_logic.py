@@ -189,7 +189,8 @@ async def test_send_prompt_uses_existing_session():
     """send_prompt should NOT call start_session when the session already exists."""
     import claude_code_mcp.session as sess
 
-    pane_content = "idle content\n>"
+    # Pane must include Claude UI markers so the new readiness gate is skipped.
+    pane_content = "Claude Code v2.0\nidle content\n>"
 
     async def _idle_ok(_name, timeout, **kwargs):
         return True
@@ -453,17 +454,18 @@ async def test_send_prompt_raises_when_claude_ui_never_appears():
 
 @pytest.mark.asyncio
 async def test_send_prompt_skips_claude_ready_for_existing_session():
-    """_wait_for_claude_ready must NOT be called for sessions that already exist."""
+    """_wait_for_claude_ready must NOT be called when Claude UI is already visible."""
     import claude_code_mcp.session as sess
 
     async def _idle_ok(_name, timeout, **kwargs):
         return True
 
+    # Pane includes Claude UI markers — readiness gate must be skipped.
     with (
         patch.object(sess, "session_alive", return_value=True),
         patch.object(sess, "_wait_for_claude_ready") as mock_ready,
         patch.object(sess, "_wait_for_idle", side_effect=_idle_ok),
-        patch.object(sess, "get_pane", return_value="idle content\n>"),
+        patch.object(sess, "get_pane", return_value="Claude Code v2.0\nidle content\n>"),
         patch.object(sess, "detect_state", return_value=SessionState.IDLE),
         patch.object(sess, "is_startup_screen", return_value=False),
         patch.object(sess, "send_keys"),
@@ -472,3 +474,39 @@ async def test_send_prompt_skips_claude_ready_for_existing_session():
         await sess.send_prompt("existing-session", "hello")
 
     mock_ready.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_send_prompt_gates_readiness_for_existing_session_missing_ui():
+    """send_prompt must wait for Claude UI on an existing session that hasn't fully started.
+
+    This is the two-step race: start_session returns before Claude's TUI has taken
+    over, then an immediate send_prompt call must wait for readiness.
+    """
+    import claude_code_mcp.session as sess
+
+    async def _ready_ok(_name, timeout):
+        return True
+
+    async def _idle_ok(_name, timeout, **kwargs):
+        return True
+
+    shell_pane = "ubuntu@host:~$ "   # raw shell — no Claude UI yet
+    claude_pane = "Claude Code v2.0\n>\n"
+
+    pane_results = iter([shell_pane, claude_pane, claude_pane, claude_pane])
+
+    with (
+        patch.object(sess, "session_alive", return_value=True),
+        patch.object(sess, "get_pane", side_effect=lambda n, **kw: next(pane_results, claude_pane)),
+        patch.object(sess, "detect_state", return_value=SessionState.IDLE),
+        patch.object(sess, "is_startup_screen", return_value=False),
+        patch.object(sess, "_wait_for_claude_ready", side_effect=_ready_ok) as mock_ready,
+        patch.object(sess, "_wait_for_idle", side_effect=_idle_ok),
+        patch.object(sess, "send_keys"),
+        patch.object(sess, "extract_response", return_value="ok"),
+    ):
+        result = await sess.send_prompt("just-started-session", "hello")
+
+    mock_ready.assert_called_once()
+    assert result["response"] == "ok"

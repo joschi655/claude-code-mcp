@@ -7,6 +7,7 @@ from enum import Enum
 ANSI_ESCAPE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
 _BOX_CHARS = str.maketrans("", "", "╭╮╰╯│─╴╸╼╽╾╿┤├┼┴┬┐└┘┌╔╗╚╝║═╟╠╡╢╣╤╥╦╧╨╩╪╫╬")
 _SPINNER = frozenset("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
+_LEADING_BULLET = re.compile(r"^[●◆→⟹⮕✓❯]\s+")
 
 
 class SessionState(Enum):
@@ -38,13 +39,19 @@ def _is_chrome(line: str) -> bool:
     """True if the line is TUI furniture, not response content."""
     if not line:
         return True
-    # bare prompt
+    # bare prompt or cursor marker
     if re.fullmatch(r">?\s*", line):
         return True
-    # status-only characters
-    if re.fullmatch(r"[✓✗●◆→⟹⮕\s]+", line):
+    # status-only characters (including ❯ prompt cursor)
+    if re.fullmatch(r"[✓✗●◆→⟹⮕❯\s]+", line):
         return True
     if re.fullmatch(r"esc to interrupt", line, re.I):
+        return True
+    # keyboard shortcut hint bar ("? for shortcuts   /compact")
+    if re.search(r"\?\s+for shortcuts", line, re.I):
+        return True
+    # auto-update / CLI error banners
+    if re.search(r"auto.?update failed", line, re.I):
         return True
     return False
 
@@ -122,6 +129,8 @@ def extract_response(before: str, after: str, sent_prompt: str) -> str:
     for raw in new_lines:
         c = raw.translate(_BOX_CHARS).strip()
         if not _is_chrome(c):
+            # Strip leading status/bullet prefix (e.g. "● result" → "result")
+            c = _LEADING_BULLET.sub("", c)
             result.append(c)
 
     # Trim leading/trailing blanks

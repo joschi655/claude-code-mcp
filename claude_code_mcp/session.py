@@ -212,7 +212,8 @@ async def send_prompt(
     Set *raw=True* to get the unprocessed pane dump instead of the
     extracted assistant answer.
     """
-    if not session_alive(name):
+    is_new_session = not session_alive(name)
+    if is_new_session:
         start_session(name, claude_session_id=claude_session_id, working_dir=working_dir)
         # Wait for Claude's TUI to take over the terminal before doing anything else.
         # Without this gate, the pane shows a bare shell prompt which detect_state()
@@ -230,6 +231,21 @@ async def send_prompt(
             )
 
     pane = get_pane(name)
+
+    # Guard the two-step flow (start_session → send_prompt): the session may exist
+    # but Claude's TUI hasn't taken over the terminal yet.  Apply the same readiness
+    # gate that auto-create uses, but only when the UI is not yet visible.
+    if not is_new_session and not is_claude_ui_present(pane):
+        if not await _wait_for_claude_ready(name, timeout=30.0):
+            raise RuntimeError(
+                f"Session '{name}' exists but Claude UI did not appear within 30 s"
+            )
+        if not await _wait_for_idle(name, timeout=30.0, dismiss_startup=True):
+            raise RuntimeError(
+                f"Session '{name}' exists but did not become idle within 30 s"
+            )
+        pane = get_pane(name)
+
     if detect_state(pane) == SessionState.BUSY:
         raise RuntimeError(f"Session '{name}' is currently busy")
 
