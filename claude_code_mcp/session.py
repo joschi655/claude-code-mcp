@@ -54,9 +54,9 @@ def get_pane(name: str, *, full_history: bool = False) -> str:
 
 
 def send_keys(name: str, text: str) -> None:
-    # Two-step send: literal text first, then Enter as a separate keystroke.
-    # This ensures the text is fully committed before Enter is processed.
-    _run("tmux", "send-keys", "-t", f"{name}:0.0", text)
+    # -l sends text literally so tmux never interprets key sequences inside *text*.
+    # Enter is sent as a separate non-literal keystroke so it is treated as Return.
+    _run("tmux", "send-keys", "-l", "-t", f"{name}:0.0", text)
     _run("tmux", "send-keys", "-t", f"{name}:0.0", "Enter")
 
 

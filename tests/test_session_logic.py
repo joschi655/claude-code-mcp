@@ -266,6 +266,41 @@ async def test_send_prompt_dismisses_startup_on_existing_session():
 
 
 # ---------------------------------------------------------------------------
+# send_keys tmux command construction
+# ---------------------------------------------------------------------------
+
+def test_send_keys_uses_literal_flag():
+    """send_keys must pass -l so tmux never interprets key sequences inside text."""
+    import claude_code_mcp.session as sess
+    from unittest.mock import call
+
+    with patch.object(sess, "_run") as mock_run:
+        sess.send_keys("mysession", "hello world")
+
+    calls = mock_run.call_args_list
+    assert len(calls) == 2
+
+    text_call_args = calls[0][0]  # positional args of first _run call
+    assert "-l" in text_call_args, "text send-keys must include -l for literal input"
+    assert "hello world" in text_call_args
+
+    enter_call_args = calls[1][0]
+    assert "-l" not in enter_call_args, "Enter send-keys should not use -l"
+    assert "Enter" in enter_call_args
+
+
+def test_send_keys_special_chars_use_literal_flag():
+    """Text containing special characters must still be sent with -l."""
+    import claude_code_mcp.session as sess
+
+    with patch.object(sess, "_run") as mock_run:
+        sess.send_keys("s", "Reply with C-c and Enter literally")
+
+    text_call_args = mock_run.call_args_list[0][0]
+    assert "-l" in text_call_args
+
+
+# ---------------------------------------------------------------------------
 # health tool
 # ---------------------------------------------------------------------------
 
