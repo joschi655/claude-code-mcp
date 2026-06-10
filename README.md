@@ -7,15 +7,31 @@ Claude Code programmatically — send prompts, receive only the final answer
 
 ## Features
 
+- **Send & auto-create** — `session_send` creates the session if it doesn't
+  exist yet; no separate `session_start` call required.
 - **Create / resume sessions** — stable MCP session name as canonical identity;
   optional `--resume <claude-session-id>` for continuity across tmux restarts.
-- **Send & receive** — send a prompt, block until Claude is idle, return the
-  extracted assistant answer only (no TUI chrome or tool-call noise).
+- **Working directory persistence** — supply `working_dir` once; recreated
+  sessions automatically resume in the same directory.
 - **Hard interrupt** — sends Ctrl-C; no extra text injected.
-- **Health / state** — reports `tmux_alive`, `claude_alive`, and
-  `state` (idle / busy / missing).
-- **Token-efficient** — raw pane dump is opt-in via `raw=True`.
+- **Health / state** — top-level `health` tool reports binary availability and
+  all session states at a glance.
+- **Token-efficient** — raw pane dump is opt-in via `raw=True`; default output
+  is the extracted assistant text only.
 - **Pure stdlib + mcp SDK** — no heavy dependencies.
+
+## Why not `claude -p`?
+
+`claude -p` (print / pipeline mode) runs a single prompt non-interactively and
+exits immediately after printing the result. Because the process terminates
+after one response, there is **no interactive channel** through which tmux can
+inject follow-up prompts. You would need to spawn a completely new process for
+every turn, losing all conversation context.
+
+This server uses the **interactive REPL** (`claude` with no flags) so that
+prompts can be injected via tmux key injection at any time, the conversation
+history accumulates inside the running process, and mid-run interrupts (`Ctrl-C`)
+work as expected.
 
 ## Requirements
 
@@ -87,27 +103,26 @@ pip install -e ".[dev]"
 
 ## Tools
 
-### `session_start(name, claude_session_id?)`
+### `health()`
 
-Create a new tmux + Claude Code session, or reconnect to an existing one.
-
-- If a tmux session called `name` already exists it is returned as-is.
-- If metadata for `name` has a stored `claude_session_id`, runs
-  `claude --resume <id>` to restore conversation history.
-- Otherwise starts a fresh `claude` session.
+System health check: returns binary availability and a summary of all known
+sessions.
 
 ```json
-{ "name": "hermes-main" }
+{
+  "tmux_available": true,
+  "claude_available": true,
+  "session_count": 1,
+  "sessions": [...]
+}
 ```
-
-Returns `SessionInfo` with `tmux_alive`, `claude_alive`, `state`,
-`claude_session_id`.
 
 ---
 
-### `session_send(name, prompt, timeout?, raw?)`
+### `session_send(name, prompt, timeout?, raw?, claude_session_id?, working_dir?)`
 
-Send a prompt and get Claude's final answer.
+Send a prompt and get Claude's final answer. **The session is created
+automatically if it does not exist** — no separate `session_start` call needed.
 
 ```json
 { "name": "hermes-main", "prompt": "List files in /tmp" }
@@ -122,6 +137,29 @@ Returns:
 - `timeout` (default 120 s) — give up after this many seconds.
 - `raw=true` — returns the full pane dump instead of the extracted answer
   (useful for debugging).
+- `claude_session_id` — used when auto-creating: runs `claude --resume <id>`.
+- `working_dir` — used when auto-creating: starts the session in this directory
+  and stores it in metadata for future recreations.
+
+---
+
+### `session_start(name, claude_session_id?, working_dir?)`
+
+Explicitly create a new tmux + Claude Code session, or reconnect to an
+existing one.
+
+- If a tmux session called `name` already exists it is returned as-is.
+- If metadata for `name` has a stored `claude_session_id`, runs
+  `claude --resume <id>` to restore conversation history.
+- `working_dir` is stored in metadata so future recreations start in the same
+  directory.
+
+```json
+{ "name": "hermes-main", "working_dir": "/home/user/myproject" }
+```
+
+Returns `SessionInfo` with `tmux_alive`, `claude_alive`, `state`,
+`claude_session_id`, `working_dir`.
 
 ---
 
@@ -141,7 +179,8 @@ Health check for a single session.
   "tmux_alive": true,
   "claude_alive": true,
   "state": "idle",
-  "claude_session_id": null
+  "claude_session_id": null,
+  "working_dir": "/home/user/myproject"
 }
 ```
 
@@ -168,21 +207,27 @@ Associate a Claude session ID with `name` so future restarts can use
 ## Typical workflow
 
 ```
-# 1. Create / resume
-session_start("hermes-main")
+# Option A: one-step (session is auto-created)
+session_send("hermes-main", "implement feature X and run the tests")
+# → creates session if needed, waits for Claude to start, returns final answer
 
-# 2. Work
+# Option B: explicit lifecycle
+session_start("hermes-main", working_dir="/home/user/myproject")
 session_send("hermes-main", "implement feature X and run the tests")
 # → returns only Claude's final answer
 
-# 3. Interrupt if stuck
+# Interrupt if stuck
 session_interrupt("hermes-main")
 
-# 4. Health check
-session_status("hermes-main")
-# → { state: "idle", ... }
+# System overview
+health()
+# → { tmux_available: true, claude_available: true, session_count: 1, ... }
 
-# 5. Tear down
+# Single session check
+session_status("hermes-main")
+# → { state: "idle", working_dir: "/home/user/myproject", ... }
+
+# Tear down
 session_destroy("hermes-main")
 ```
 
@@ -193,7 +238,8 @@ this across tmux restarts:
 
 1. Run `session_send("name", "/session-id")` to ask Claude for its ID.
 2. Call `session_set_claude_id("name", "<id>")` to persist it.
-3. After a restart, `session_start("name")` will automatically `--resume`.
+3. After a restart, `session_start("name")` (or `session_send`) will
+   automatically `--resume`.
 
 ## Development
 

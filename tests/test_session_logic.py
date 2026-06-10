@@ -1,14 +1,17 @@
 """Unit tests for metadata and SessionInfo — no tmux required."""
 from __future__ import annotations
 
+import asyncio
 import importlib
 import json
 import os
 import tempfile
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from claude_tmux_mcp.session import SessionInfo
+from claude_tmux_mcp.parser import SessionState
 
 
 # ---------------------------------------------------------------------------
@@ -18,7 +21,6 @@ from claude_tmux_mcp.session import SessionInfo
 def _meta(tmpdir: str):
     """Return a freshly reloaded metadata module pointing at *tmpdir*."""
     import claude_tmux_mcp.metadata as m
-    # Patch the path at module level for this call
     os.environ["XDG_DATA_HOME"] = tmpdir
     importlib.reload(m)
     return m
@@ -75,6 +77,25 @@ def test_metadata_handles_corrupt_file():
         assert m.load("anything") is None
 
 
+def test_metadata_saves_working_dir():
+    with tempfile.TemporaryDirectory() as d:
+        m = _meta(d)
+        m.save("s1", claude_session_id="abc", working_dir="/tmp/myproject")
+        loaded = m.load("s1")
+        assert loaded["working_dir"] == "/tmp/myproject"
+        assert loaded["claude_session_id"] == "abc"
+
+
+def test_metadata_working_dir_persists_across_saves():
+    with tempfile.TemporaryDirectory() as d:
+        m = _meta(d)
+        m.save("s1", working_dir="/tmp/myproject")
+        m.save("s1", claude_session_id="new-id")
+        loaded = m.load("s1")
+        assert loaded["working_dir"] == "/tmp/myproject"
+        assert loaded["claude_session_id"] == "new-id"
+
+
 # ---------------------------------------------------------------------------
 # SessionInfo
 # ---------------------------------------------------------------------------
@@ -102,4 +123,123 @@ def test_session_info_defaults():
         state="missing",
     )
     assert info.claude_session_id is None
+    assert info.working_dir is None
     assert info.to_dict()["claude_session_id"] is None
+    assert info.to_dict()["working_dir"] is None
+
+
+def test_session_info_working_dir():
+    info = SessionInfo(
+        name="proj",
+        tmux_alive=True,
+        claude_alive=True,
+        state="idle",
+        working_dir="/home/user/project",
+    )
+    d = info.to_dict()
+    assert d["working_dir"] == "/home/user/project"
+
+
+# ---------------------------------------------------------------------------
+# send_prompt auto-create behaviour (mocked)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_send_prompt_autocreates_missing_session():
+    """send_prompt should call start_session when the session does not exist."""
+    import claude_tmux_mcp.session as sess
+
+    pane_content = "idle content\n>"
+
+    async def _idle_ok(_name, timeout):
+        return True
+
+    with (
+        patch.object(sess, "session_alive", return_value=False),
+        patch.object(sess, "start_session") as mock_start,
+        patch.object(sess, "get_pane", return_value=pane_content),
+        patch.object(sess, "detect_state", return_value=SessionState.IDLE),
+        patch.object(sess, "_wait_for_idle", side_effect=_idle_ok),
+        patch.object(sess, "send_keys"),
+        patch.object(sess, "extract_response", return_value="auto-created response"),
+    ):
+        result = await sess.send_prompt(
+            "new-session",
+            "hello",
+            claude_session_id="cid-1",
+            working_dir="/tmp/proj",
+        )
+
+    mock_start.assert_called_once_with(
+        "new-session",
+        claude_session_id="cid-1",
+        working_dir="/tmp/proj",
+    )
+    assert result["response"] == "auto-created response"
+    assert not result["timed_out"]
+
+
+@pytest.mark.asyncio
+async def test_send_prompt_uses_existing_session():
+    """send_prompt should NOT call start_session when the session already exists."""
+    import claude_tmux_mcp.session as sess
+
+    pane_content = "idle content\n>"
+
+    async def _idle_ok(_name, timeout):
+        return True
+
+    with (
+        patch.object(sess, "session_alive", return_value=True),
+        patch.object(sess, "start_session") as mock_start,
+        patch.object(sess, "get_pane", return_value=pane_content),
+        patch.object(sess, "detect_state", return_value=SessionState.IDLE),
+        patch.object(sess, "_wait_for_idle", side_effect=_idle_ok),
+        patch.object(sess, "send_keys"),
+        patch.object(sess, "extract_response", return_value="existing response"),
+    ):
+        result = await sess.send_prompt("existing-session", "hello")
+
+    mock_start.assert_not_called()
+    assert result["response"] == "existing response"
+
+
+# ---------------------------------------------------------------------------
+# health tool
+# ---------------------------------------------------------------------------
+
+def test_health_tool_returns_binary_status():
+    from claude_tmux_mcp import server
+    import claude_tmux_mcp.session as sess
+
+    with (
+        patch.object(sess, "_tmux_ok", return_value=True),
+        patch.object(sess, "_claude_ok", return_value=False),
+        patch.object(sess, "list_sessions", return_value=[]),
+    ):
+        result = server.health()
+
+    assert result["tmux_available"] is True
+    assert result["claude_available"] is False
+    assert result["session_count"] == 0
+    assert result["sessions"] == []
+
+
+def test_health_tool_reports_sessions():
+    from claude_tmux_mcp import server
+    import claude_tmux_mcp.session as sess
+
+    fake_sessions = [
+        {"name": "s1", "state": "idle", "tmux_alive": True, "claude_alive": True,
+         "claude_session_id": None, "working_dir": None},
+    ]
+
+    with (
+        patch.object(sess, "_tmux_ok", return_value=True),
+        patch.object(sess, "_claude_ok", return_value=True),
+        patch.object(sess, "list_sessions", return_value=fake_sessions),
+    ):
+        result = server.health()
+
+    assert result["session_count"] == 1
+    assert result["sessions"][0]["name"] == "s1"

@@ -19,6 +19,7 @@ class SessionInfo:
     claude_alive: bool
     state: str          # SessionState.value
     claude_session_id: str | None = None
+    working_dir: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -53,7 +54,10 @@ def get_pane(name: str, *, full_history: bool = False) -> str:
 
 
 def send_keys(name: str, text: str) -> None:
-    _run("tmux", "send-keys", "-t", f"{name}:0.0", text, "Enter")
+    # Two-step send: literal text first, then Enter as a separate keystroke.
+    # This ensures the text is fully committed before Enter is processed.
+    _run("tmux", "send-keys", "-t", f"{name}:0.0", text)
+    _run("tmux", "send-keys", "-t", f"{name}:0.0", "Enter")
 
 
 def send_ctrl_c(name: str) -> None:
@@ -109,12 +113,14 @@ def get_status(name: str) -> SessionInfo:
         claude_alive=claude_alive,
         state=state.value,
         claude_session_id=meta.get("claude_session_id"),
+        working_dir=meta.get("working_dir"),
     )
 
 
 def start_session(
     name: str,
     claude_session_id: str | None = None,
+    working_dir: str | None = None,
 ) -> SessionInfo:
     """Create a new session or reconnect to an existing one.
 
@@ -122,6 +128,10 @@ def start_session(
       1. Explicit *claude_session_id* argument
       2. Stored metadata for *name*
       3. Fresh ``claude`` session (no --resume)
+
+    If *working_dir* is given and the session does not yet exist, the tmux
+    window is started in that directory and the path is stored in metadata so
+    a recreated session resumes in the same place.
     """
     if not _tmux_ok():
         raise RuntimeError("tmux not found in PATH")
@@ -135,13 +145,20 @@ def start_session(
 
     meta = metadata.load(name) or {}
     resume_id = claude_session_id or meta.get("claude_session_id")
+    wd = working_dir or meta.get("working_dir")
 
-    _run("tmux", "new-session", "-d", "-s", name, "-x", "220", "-y", "50")
+    new_session_cmd = ["tmux", "new-session", "-d", "-s", name, "-x", "220", "-y", "50"]
+    if wd:
+        new_session_cmd += ["-c", wd]
+    _run(*new_session_cmd)
 
     cmd = f"claude --resume {resume_id}" if resume_id else "claude"
     send_keys(name, cmd)
 
-    metadata.save(name, claude_session_id=resume_id)
+    fields: dict[str, Any] = {"claude_session_id": resume_id}
+    if wd:
+        fields["working_dir"] = wd
+    metadata.save(name, **fields)
     return get_status(name)
 
 
@@ -151,15 +168,26 @@ async def send_prompt(
     *,
     timeout: float = 120.0,
     raw: bool = False,
+    claude_session_id: str | None = None,
+    working_dir: str | None = None,
 ) -> dict[str, Any]:
     """Send *prompt* to the session, wait for idle, return the response.
+
+    If the session does not exist it is automatically created (using
+    *claude_session_id* and *working_dir* when provided).
 
     Returns ``{"response": str, "timed_out": bool, "raw": bool}``.
     Set *raw=True* to get the unprocessed pane dump instead of the
     extracted assistant answer.
     """
     if not session_alive(name):
-        raise ValueError(f"Session '{name}' does not exist; call session_start first")
+        start_session(name, claude_session_id=claude_session_id, working_dir=working_dir)
+        # Wait for Claude to start up and reach idle before injecting the prompt
+        started = await _wait_for_idle(name, timeout=30.0)
+        if not started:
+            raise RuntimeError(
+                f"Session '{name}' was auto-created but did not become idle within 30 s"
+            )
 
     if detect_state(get_pane(name)) == SessionState.BUSY:
         raise RuntimeError(f"Session '{name}' is currently busy")

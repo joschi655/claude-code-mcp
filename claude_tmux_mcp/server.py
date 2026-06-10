@@ -9,17 +9,38 @@ app = FastMCP(
     "claude-tmux-mcp",
     instructions=(
         "Orchestrate interactive Claude Code sessions running inside tmux. "
-        "Use session_start to create/resume, session_send to prompt and get the "
-        "final answer, session_status for health checks, session_interrupt to "
-        "send Ctrl-C, and session_destroy to clean up."
+        "Use session_send to send a prompt to a running OR new session and get the "
+        "final answer automatically. Use session_start to pre-create/resume, "
+        "health for a system status overview, session_status for a single session, "
+        "session_interrupt to send Ctrl-C, and session_destroy to clean up."
     ),
 )
+
+
+@app.tool()
+def health() -> dict:
+    """System health check: binary availability + summary of all known sessions.
+
+    Returns:
+    - ``tmux_available`` / ``claude_available`` — whether the required binaries
+      are on PATH.
+    - ``session_count`` — total number of known sessions.
+    - ``sessions`` — list of SessionInfo dicts (same shape as session_status).
+    """
+    sessions = session.list_sessions()
+    return {
+        "tmux_available": session._tmux_ok(),
+        "claude_available": session._claude_ok(),
+        "session_count": len(sessions),
+        "sessions": sessions,
+    }
 
 
 @app.tool()
 def session_start(
     name: str,
     claude_session_id: str | None = None,
+    working_dir: str | None = None,
 ) -> dict:
     """Create a new tmux + Claude Code session or reconnect to an existing one.
 
@@ -28,8 +49,14 @@ def session_start(
       supplied via *claude_session_id*), ``claude --resume`` is used so the
       conversation history is preserved.
     - Otherwise a fresh ``claude`` session is started.
+    - *working_dir* sets the working directory for a new session and is stored
+      in metadata so future recreations start in the same place.
     """
-    info = session.start_session(name, claude_session_id=claude_session_id)
+    info = session.start_session(
+        name,
+        claude_session_id=claude_session_id,
+        working_dir=working_dir,
+    )
     return info.to_dict()
 
 
@@ -39,8 +66,14 @@ async def session_send(
     prompt: str,
     timeout: int = 120,
     raw: bool = False,
+    claude_session_id: str | None = None,
+    working_dir: str | None = None,
 ) -> dict:
     """Send *prompt* to the named session and return Claude's final answer.
+
+    The session is **automatically created** if it does not exist — there is no
+    need to call ``session_start`` first.  Pass *claude_session_id* and/or
+    *working_dir* to control how a new session is initialised.
 
     Blocks until Claude Code goes idle (or *timeout* seconds elapse).
     Returns ``{"response": str, "timed_out": bool, "raw": bool}``.
@@ -49,7 +82,12 @@ async def session_send(
     default output is the extracted assistant text only (token-efficient).
     """
     return await session.send_prompt(
-        name, prompt, timeout=float(timeout), raw=raw
+        name,
+        prompt,
+        timeout=float(timeout),
+        raw=raw,
+        claude_session_id=claude_session_id,
+        working_dir=working_dir,
     )
 
 
@@ -67,7 +105,7 @@ def session_status(name: str) -> dict:
     """Return health/state info for the named session.
 
     Fields: ``tmux_alive``, ``claude_alive``, ``state`` (idle/busy/missing),
-    ``claude_session_id``.
+    ``claude_session_id``, ``working_dir``.
     """
     return session.get_status(name).to_dict()
 
