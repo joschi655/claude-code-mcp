@@ -1,12 +1,13 @@
 # claude-code-mcp
 
-An MCP server that gives orchestrator agents (like **Hermes**) fine-grained
-control over interactive **Claude Code** sessions running inside **tmux**.
+It ssounds dumb...
+but its literally that. Using Claude Code through an MCP server.
+Its neant for orchestrator agents (like [**Hermes**](https://github.com/nousresearch/hermes-agent)), giving it fine-grained control over interactive **Claude Code** sessions running inside **tmux**.
 
 The core value: a long-running Claude Code REPL stays alive in a tmux pane, and
 your orchestrator can **steer it at any point** — send the initial prompt,
 inject a follow-up message mid-session, interrupt a stuck run, or read back
-only the final answer (token-efficient by default).
+only the final answer (token-efficient by default). Way better than using it through 'claude -p'. 
 
 ## Why an orchestrator needs this
 
