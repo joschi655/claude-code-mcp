@@ -1,7 +1,7 @@
 """Unit tests for parser.py — no tmux required."""
 import pytest
 
-from claude_tmux_mcp.parser import (
+from claude_code_mcp.parser import (
     SessionState,
     _is_chrome,
     clean_line,

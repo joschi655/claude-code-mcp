@@ -3,13 +3,13 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "claude-tmux-mcp"
+name = "claude-code-mcp"
 version = "0.1.0"
-description = "MCP server for orchestrating interactive Claude Code sessions inside tmux"
+description = "MCP server giving orchestrator agents fine-grained control over interactive Claude Code sessions via tmux"
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.11"
-keywords = ["mcp", "claude", "tmux", "ai", "agent"]
+keywords = ["mcp", "claude", "tmux", "ai", "agent", "orchestration"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -30,16 +30,16 @@ dev = [
 ]
 
 [project.scripts]
-claude-tmux-mcp = "claude_tmux_mcp.__main__:main"
+claude-code-mcp = "claude_code_mcp.__main__:main"
 
 [project.urls]
-Homepage = "https://github.com/joschi655/claude-code-tmux-mcp"
-Repository = "https://github.com/joschi655/claude-code-tmux-mcp"
-Issues = "https://github.com/joschi655/claude-code-tmux-mcp/issues"
+Homepage = "https://github.com/joschi655/claude-code-mcp"
+Repository = "https://github.com/joschi655/claude-code-mcp"
+Issues = "https://github.com/joschi655/claude-code-mcp/issues"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["claude_tmux_mcp"]
+packages = ["claude_code_mcp"]

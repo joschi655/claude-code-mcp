@@ -9,7 +9,7 @@ from typing import Any
 
 def _store() -> Path:
     base = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
-    d = base / "claude-tmux-mcp"
+    d = base / "claude-code-mcp"
     d.mkdir(parents=True, exist_ok=True)
     return d / "sessions.json"
 

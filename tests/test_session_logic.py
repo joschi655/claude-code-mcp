@@ -10,8 +10,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from claude_tmux_mcp.session import SessionInfo
-from claude_tmux_mcp.parser import SessionState
+from claude_code_mcp.session import SessionInfo
+from claude_code_mcp.parser import SessionState
 
 
 # ---------------------------------------------------------------------------
@@ -20,7 +20,7 @@ from claude_tmux_mcp.parser import SessionState
 
 def _meta(tmpdir: str):
     """Return a freshly reloaded metadata module pointing at *tmpdir*."""
-    import claude_tmux_mcp.metadata as m
+    import claude_code_mcp.metadata as m
     os.environ["XDG_DATA_HOME"] = tmpdir
     importlib.reload(m)
     return m
@@ -69,8 +69,8 @@ def test_metadata_load_missing_returns_none():
 
 def test_metadata_handles_corrupt_file():
     with tempfile.TemporaryDirectory() as d:
-        os.makedirs(os.path.join(d, "claude-tmux-mcp"), exist_ok=True)
-        p = os.path.join(d, "claude-tmux-mcp", "sessions.json")
+        os.makedirs(os.path.join(d, "claude-code-mcp"), exist_ok=True)
+        p = os.path.join(d, "claude-code-mcp", "sessions.json")
         with open(p, "w") as f:
             f.write("not json{{{{")
         m = _meta(d)
@@ -147,7 +147,7 @@ def test_session_info_working_dir():
 @pytest.mark.asyncio
 async def test_send_prompt_autocreates_missing_session():
     """send_prompt should call start_session when the session does not exist."""
-    import claude_tmux_mcp.session as sess
+    import claude_code_mcp.session as sess
 
     pane_content = "idle content\n>"
 
@@ -182,7 +182,7 @@ async def test_send_prompt_autocreates_missing_session():
 @pytest.mark.asyncio
 async def test_send_prompt_uses_existing_session():
     """send_prompt should NOT call start_session when the session already exists."""
-    import claude_tmux_mcp.session as sess
+    import claude_code_mcp.session as sess
 
     pane_content = "idle content\n>"
 
@@ -209,8 +209,8 @@ async def test_send_prompt_uses_existing_session():
 # ---------------------------------------------------------------------------
 
 def test_health_tool_returns_binary_status():
-    from claude_tmux_mcp import server
-    import claude_tmux_mcp.session as sess
+    from claude_code_mcp import server
+    import claude_code_mcp.session as sess
 
     with (
         patch.object(sess, "_tmux_ok", return_value=True),
@@ -226,8 +226,8 @@ def test_health_tool_returns_binary_status():
 
 
 def test_health_tool_reports_sessions():
-    from claude_tmux_mcp import server
-    import claude_tmux_mcp.session as sess
+    from claude_code_mcp import server
+    import claude_code_mcp.session as sess
 
     fake_sessions = [
         {"name": "s1", "state": "idle", "tmux_alive": True, "claude_alive": True,

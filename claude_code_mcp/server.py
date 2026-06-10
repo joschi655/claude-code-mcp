@@ -6,13 +6,14 @@ from mcp.server.fastmcp import FastMCP
 from . import metadata, session
 
 app = FastMCP(
-    "claude-tmux-mcp",
+    "claude-code-mcp",
     instructions=(
-        "Orchestrate interactive Claude Code sessions running inside tmux. "
-        "Use session_send to send a prompt to a running OR new session and get the "
-        "final answer automatically. Use session_start to pre-create/resume, "
+        "Control interactive Claude Code sessions running inside tmux on behalf of "
+        "an orchestrator agent (e.g. Hermes). Use session_send to send a prompt — or "
+        "steer a follow-up message into an already-running session — and get only the "
+        "final answer (token-efficient). Use session_start to pre-create/resume, "
         "health for a system status overview, session_status for a single session, "
-        "session_interrupt to send Ctrl-C, and session_destroy to clean up."
+        "session_interrupt to send Ctrl-C mid-run, and session_destroy to clean up."
     ),
 )
 

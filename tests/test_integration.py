@@ -27,7 +27,7 @@ SESSION = f"inttest-{os.getpid()}"
 def cleanup():
     """Ensure the test session is killed after each test."""
     yield
-    from claude_tmux_mcp import session
+    from claude_code_mcp import session
     if session.session_alive(SESSION):
         session.destroy_session(SESSION)
 
@@ -45,7 +45,7 @@ def _require_tools():
 
 def test_start_and_status():
     _require_tools()
-    from claude_tmux_mcp import session
+    from claude_code_mcp import session
 
     info = session.start_session(SESSION)
     assert info.tmux_alive, "tmux session should be alive after start"
@@ -57,7 +57,7 @@ def test_start_and_status():
 
 def test_start_idempotent():
     _require_tools()
-    from claude_tmux_mcp import session
+    from claude_code_mcp import session
 
     i1 = session.start_session(SESSION)
     i2 = session.start_session(SESSION)  # should not raise or create duplicate
@@ -66,7 +66,7 @@ def test_start_idempotent():
 
 def test_destroy():
     _require_tools()
-    from claude_tmux_mcp import session
+    from claude_code_mcp import session
 
     session.start_session(SESSION)
     session.destroy_session(SESSION)
@@ -75,7 +75,7 @@ def test_destroy():
 
 def test_list_includes_managed():
     _require_tools()
-    from claude_tmux_mcp import session
+    from claude_code_mcp import session
 
     session.start_session(SESSION)
     names = [s["name"] for s in session.list_sessions()]
@@ -88,7 +88,7 @@ def test_list_includes_managed():
 
 def test_interrupt_sends_ctrl_c():
     _require_tools()
-    from claude_tmux_mcp import session
+    from claude_code_mcp import session
 
     session.start_session(SESSION)
     # Just check it doesn't raise
@@ -102,7 +102,7 @@ def test_interrupt_sends_ctrl_c():
 @pytest.mark.asyncio
 async def test_send_and_receive():
     _require_tools()
-    from claude_tmux_mcp import session
+    from claude_code_mcp import session
 
     session.start_session(SESSION)
     # Give Claude Code time to start up
@@ -121,7 +121,7 @@ async def test_send_and_receive():
 @pytest.mark.asyncio
 async def test_raw_response_contains_pane_content():
     _require_tools()
-    from claude_tmux_mcp import session
+    from claude_code_mcp import session
 
     session.start_session(SESSION)
     await asyncio.sleep(8)
