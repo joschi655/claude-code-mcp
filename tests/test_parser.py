@@ -7,6 +7,7 @@ from claude_code_mcp.parser import (
     clean_line,
     detect_state,
     extract_response,
+    is_claude_ui_present,
     is_startup_screen,
     strip_ansi,
 )
@@ -216,3 +217,56 @@ def test_detect_state_startup_screen_is_idle():
     # The startup screen has no spinner and no "esc to interrupt" — it reads as IDLE.
     # is_startup_screen() is the correct gate, not detect_state().
     assert detect_state(STARTUP_PANE) == SessionState.IDLE
+
+
+# ---------------------------------------------------------------------------
+# is_claude_ui_present
+# ---------------------------------------------------------------------------
+
+def test_is_claude_ui_present_false_for_raw_shell():
+    """A bare shell prompt is not Claude UI."""
+    assert not is_claude_ui_present("ubuntu@ubuntu:~/projects$ ")
+    assert not is_claude_ui_present("")
+    assert not is_claude_ui_present("\n$ \n")
+    assert not is_claude_ui_present("ubuntu@host:~$ claude\n")
+
+
+def test_is_claude_ui_present_startup_screen():
+    assert is_claude_ui_present(STARTUP_PANE)
+
+
+def test_is_claude_ui_present_effort_option_line():
+    assert is_claude_ui_present("❯ 1. ◐ Medium (recommended)\n")
+
+
+def test_is_claude_ui_present_esc_to_interrupt():
+    assert is_claude_ui_present("esc to interrupt\n⠙ Thinking...\n")
+
+
+def test_is_claude_ui_present_spinner_only():
+    assert is_claude_ui_present("⠋ Loading...\n")
+
+
+def test_is_claude_ui_present_claude_code_branding():
+    assert is_claude_ui_present("Claude Code v2.1.92\nTips for getting started\n")
+
+
+def test_is_claude_ui_present_claude_ai():
+    assert is_claude_ui_present("claude.ai\n>\n")
+
+
+def test_is_claude_ui_present_welcome_back():
+    assert is_claude_ui_present("Welcome back Oskar!\n>\n")
+
+
+def test_is_claude_ui_present_tips():
+    assert is_claude_ui_present("Tips for getting started\n")
+
+
+def test_is_claude_ui_present_strips_ansi():
+    assert is_claude_ui_present("\x1b[1mClaude Code\x1b[0m v2.0\n")
+
+
+def test_is_claude_ui_present_idle_pane_with_branding():
+    # An idle pane that previously showed Claude content is "present"
+    assert is_claude_ui_present("Claude Code v2.0\n" + IDLE_PANE)

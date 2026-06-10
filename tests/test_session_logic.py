@@ -151,6 +151,9 @@ async def test_send_prompt_autocreates_missing_session():
 
     pane_content = "idle content\n>"
 
+    async def _ready_ok(_name, timeout):
+        return True
+
     async def _idle_ok(_name, timeout, **kwargs):
         return True
 
@@ -160,6 +163,7 @@ async def test_send_prompt_autocreates_missing_session():
         patch.object(sess, "get_pane", return_value=pane_content),
         patch.object(sess, "detect_state", return_value=SessionState.IDLE),
         patch.object(sess, "is_startup_screen", return_value=False),
+        patch.object(sess, "_wait_for_claude_ready", side_effect=_ready_ok),
         patch.object(sess, "_wait_for_idle", side_effect=_idle_ok),
         patch.object(sess, "send_keys"),
         patch.object(sess, "extract_response", return_value="auto-created response"),
@@ -213,6 +217,9 @@ async def test_send_prompt_autocreate_uses_dismiss_startup():
 
     pane_content = "idle content\n>"
 
+    async def _ready_ok(_name, timeout):
+        return True
+
     async def _idle_ok(_name, timeout, **kwargs):
         return True
 
@@ -222,6 +229,7 @@ async def test_send_prompt_autocreate_uses_dismiss_startup():
         patch.object(sess, "get_pane", return_value=pane_content),
         patch.object(sess, "detect_state", return_value=SessionState.IDLE),
         patch.object(sess, "is_startup_screen", return_value=False),
+        patch.object(sess, "_wait_for_claude_ready", side_effect=_ready_ok),
         patch.object(sess, "_wait_for_idle", side_effect=_idle_ok) as mock_wait,
         patch.object(sess, "send_keys"),
         patch.object(sess, "extract_response", return_value="response"),
@@ -339,3 +347,128 @@ def test_health_tool_reports_sessions():
 
     assert result["session_count"] == 1
     assert result["sessions"][0]["name"] == "s1"
+
+
+# ---------------------------------------------------------------------------
+# Boot-readiness: _wait_for_claude_ready
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_wait_for_claude_ready_returns_true_on_ui_signal():
+    """Resolves immediately when the pane shows a Claude UI element."""
+    import claude_code_mcp.session as sess
+
+    with (
+        patch.object(sess, "get_pane", return_value="Claude Code v2.0\n>\n"),
+        patch.object(sess, "is_claude_ui_present", return_value=True),
+    ):
+        result = await sess._wait_for_claude_ready("s", timeout=5.0)
+
+    assert result is True
+
+
+@pytest.mark.asyncio
+async def test_wait_for_claude_ready_returns_false_on_timeout():
+    """Returns False when the pane never shows Claude UI within the timeout."""
+    import claude_code_mcp.session as sess
+
+    with (
+        patch.object(sess, "get_pane", return_value="ubuntu@host:~$ claude\n"),
+        patch.object(sess, "is_claude_ui_present", return_value=False),
+    ):
+        result = await sess._wait_for_claude_ready("s", timeout=0.1)
+
+    assert result is False
+
+
+@pytest.mark.asyncio
+async def test_wait_for_claude_ready_polls_until_signal():
+    """Keeps polling and resolves once a signal appears."""
+    import claude_code_mcp.session as sess
+
+    # First two polls: raw shell.  Third poll: Claude spinner visible.
+    poll_results = iter([False, False, True])
+
+    with (
+        patch.object(sess, "get_pane", return_value=""),
+        patch.object(sess, "is_claude_ui_present", side_effect=poll_results),
+    ):
+        result = await sess._wait_for_claude_ready("s", timeout=5.0)
+
+    assert result is True
+
+
+# ---------------------------------------------------------------------------
+# Boot-readiness: send_prompt ordering
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_send_prompt_calls_claude_ready_before_idle_on_autocreate():
+    """_wait_for_claude_ready must be called before _wait_for_idle on auto-create."""
+    import claude_code_mcp.session as sess
+
+    call_order: list[str] = []
+
+    async def track_ready(_name, timeout):
+        call_order.append("ready")
+        return True
+
+    async def track_idle(_name, timeout, **kwargs):
+        call_order.append("idle")
+        return True
+
+    with (
+        patch.object(sess, "session_alive", return_value=False),
+        patch.object(sess, "start_session"),
+        patch.object(sess, "_wait_for_claude_ready", side_effect=track_ready),
+        patch.object(sess, "_wait_for_idle", side_effect=track_idle),
+        patch.object(sess, "get_pane", return_value=">\n"),
+        patch.object(sess, "detect_state", return_value=SessionState.IDLE),
+        patch.object(sess, "is_startup_screen", return_value=False),
+        patch.object(sess, "send_keys"),
+        patch.object(sess, "extract_response", return_value="ok"),
+    ):
+        await sess.send_prompt("new-session", "hello")
+
+    assert call_order[0] == "ready", "_wait_for_claude_ready must run before _wait_for_idle"
+    assert "idle" in call_order
+
+
+@pytest.mark.asyncio
+async def test_send_prompt_raises_when_claude_ui_never_appears():
+    """send_prompt raises a clear error when Claude UI never takes over the terminal."""
+    import claude_code_mcp.session as sess
+
+    async def never_ready(_name, timeout):
+        return False
+
+    with (
+        patch.object(sess, "session_alive", return_value=False),
+        patch.object(sess, "start_session"),
+        patch.object(sess, "_wait_for_claude_ready", side_effect=never_ready),
+    ):
+        with pytest.raises(RuntimeError, match="Claude UI did not appear"):
+            await sess.send_prompt("new-session", "hello")
+
+
+@pytest.mark.asyncio
+async def test_send_prompt_skips_claude_ready_for_existing_session():
+    """_wait_for_claude_ready must NOT be called for sessions that already exist."""
+    import claude_code_mcp.session as sess
+
+    async def _idle_ok(_name, timeout, **kwargs):
+        return True
+
+    with (
+        patch.object(sess, "session_alive", return_value=True),
+        patch.object(sess, "_wait_for_claude_ready") as mock_ready,
+        patch.object(sess, "_wait_for_idle", side_effect=_idle_ok),
+        patch.object(sess, "get_pane", return_value="idle content\n>"),
+        patch.object(sess, "detect_state", return_value=SessionState.IDLE),
+        patch.object(sess, "is_startup_screen", return_value=False),
+        patch.object(sess, "send_keys"),
+        patch.object(sess, "extract_response", return_value="ok"),
+    ):
+        await sess.send_prompt("existing-session", "hello")
+
+    mock_ready.assert_not_called()

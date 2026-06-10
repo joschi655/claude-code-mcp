@@ -55,11 +55,36 @@ _STARTUP_PATTERNS = (
     re.compile(r"○ low.*◐ medium.*● high"),
 )
 
+# Patterns that only appear once Claude Code's TUI has taken over the terminal.
+# A raw shell prompt matches none of these.
+_CLAUDE_UI_PATTERNS = (
+    *_STARTUP_PATTERNS,
+    re.compile(r"esc to interrupt", re.I),
+    re.compile(r"claude code", re.I),
+    re.compile(r"claude\.ai", re.I),
+    re.compile(r"tips for getting started", re.I),
+    re.compile(r"welcome back", re.I),
+)
+
 
 def is_startup_screen(pane_content: str) -> bool:
     """Return True if the pane is showing Claude Code's effort-selection startup UI."""
     clean = strip_ansi(pane_content)
     return any(p.search(clean) for p in _STARTUP_PATTERNS)
+
+
+def is_claude_ui_present(pane_content: str) -> bool:
+    """Return True if the pane shows any Claude Code UI element (not a raw shell).
+
+    Matches branding text, the effort-selector, 'esc to interrupt', or loading
+    spinner characters — all of which appear only after Claude's TUI has taken
+    over the terminal.
+    """
+    clean = strip_ansi(pane_content)
+    if any(p.search(clean) for p in _CLAUDE_UI_PATTERNS):
+        return True
+    # Spinner chars only appear during Claude loading / active processing.
+    return any(c in clean for c in _SPINNER)
 
 
 def extract_response(before: str, after: str, sent_prompt: str) -> str:

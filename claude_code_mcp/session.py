@@ -9,7 +9,7 @@ from dataclasses import asdict, dataclass
 from typing import Any
 
 from . import metadata
-from .parser import SessionState, detect_state, extract_response, is_startup_screen
+from .parser import SessionState, detect_state, extract_response, is_claude_ui_present, is_startup_screen
 
 
 @dataclass
@@ -67,6 +67,21 @@ def send_ctrl_c(name: str) -> None:
 # ---------------------------------------------------------------------------
 # State polling
 # ---------------------------------------------------------------------------
+
+async def _wait_for_claude_ready(name: str, timeout: float = 30.0) -> bool:
+    """Poll until the pane shows Claude Code UI, not just a raw shell prompt.
+
+    Must be called after launching ``claude`` and before any prompt is sent,
+    so we don't inject text into the shell while the TUI is still booting.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        pane = get_pane(name)
+        if is_claude_ui_present(pane):
+            return True
+        await asyncio.sleep(0.5)
+    return False
+
 
 async def _wait_for_idle(name: str, timeout: float, *, dismiss_startup: bool = False) -> bool:
     """Poll until Claude Code goes idle or timeout expires.
@@ -199,7 +214,15 @@ async def send_prompt(
     """
     if not session_alive(name):
         start_session(name, claude_session_id=claude_session_id, working_dir=working_dir)
-        # Wait for Claude to start up; auto-dismiss the effort-selection screen if shown.
+        # Wait for Claude's TUI to take over the terminal before doing anything else.
+        # Without this gate, the pane shows a bare shell prompt which detect_state()
+        # misreads as IDLE, causing the user prompt to be injected into the shell
+        # instead of into Claude.
+        if not await _wait_for_claude_ready(name, timeout=30.0):
+            raise RuntimeError(
+                f"Session '{name}' was auto-created but Claude UI did not appear within 30 s"
+            )
+        # Now wait for idle; auto-dismiss the effort-selection screen if shown.
         started = await _wait_for_idle(name, timeout=30.0, dismiss_startup=True)
         if not started:
             raise RuntimeError(
